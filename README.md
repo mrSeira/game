@@ -7,3 +7,4 @@
 - `assets.json` — спрайты и кадры мультфильма.
 - `tools/build.py` — собирает `dist/index.html` из `game.js` и `assets.json`.
 - `tools/cut.py`, `tools/pack.py` — вырезают спрайты из листов персонажей (папка `src/`) и упаковывают их.
+- `tools/voice.py` — озвучивает все реплики голосом Piper (`ru-irinia-medium`) в `voices.json`, чтобы голос работал и без синтезатора речи в браузере (например, на Android TV).

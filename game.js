@@ -12,7 +12,21 @@ function loadAll(done) {
 
 // ---------- звук и голос ----------
 let AC = null;
-function audioInit() { if (!AC) { try { AC = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {} } if (AC && AC.state === 'suspended') AC.resume(); }
+const VOBUF = {}; let voSrc = null, voDecoded = false;
+function audioInit() {
+  if (!AC) { try { AC = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {} }
+  if (AC && AC.state === 'suspended') AC.resume();
+  if (AC && !voDecoded && typeof VOICES !== 'undefined') {
+    voDecoded = true;
+    Object.keys(VOICES).forEach(t => {
+      try {
+        const b64 = VOICES[t].split(',')[1], bin = atob(b64), buf = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+        AC.decodeAudioData(buf.buffer, d => { VOBUF[t] = d; }, () => {});
+      } catch (e) {}
+    });
+  }
+}
 function beep(freq, dur, type, vol, delay) {
   if (!AC) return;
   const t = AC.currentTime + (delay || 0), o = AC.createOscillator(), v = AC.createGain();
@@ -32,6 +46,11 @@ let sub = null;
 const VOICE = { 'Шуршик': 1.6, 'Искорка': 1.4, 'Алиса': 1.3, 'Мама': 1.0, 'Совушка': 0.9 };
 function say(who, text) {
   sub = { who, text, t: Math.max(3, text.length * 0.085) };
+  if (voSrc) { try { voSrc.stop(); } catch (e) {} voSrc = null; }
+  const vb = VOBUF[text];
+  if (AC && vb) {
+    try { const s = AC.createBufferSource(), v = AC.createGain(); v.gain.value = 1.4; s.buffer = vb; s.connect(v); v.connect(AC.destination); s.start(); voSrc = s; sub.t = Math.max(sub.t, vb.duration + 0.8); return; } catch (e) {}
+  }
   try {
     if (window.speechSynthesis) {
       speechSynthesis.cancel();
@@ -53,12 +72,18 @@ function padIn(p) {
   const b = n => !!(p.buttons[n] && p.buttons[n].pressed);
   let x = p.axes[0] || 0; if (Math.abs(x) < 0.35) x = 0; else x = Math.sign(x);
   if (b(14)) x = -1; if (b(15)) x = 1;
-  return { x, jump: b(0), act: b(2) || b(1) || b(3) };
+  if (p.mapping !== 'standard') {
+    const ax = p.axes;
+    if (ax.length > 7 && Math.abs(ax[6]) > 0.5 && Math.abs(ax[6]) <= 1.01) x = Math.sign(ax[6]);
+    if (ax.length > 9) { const h = ax[9]; if (h > -0.9 && h < -0.05) x = 1; else if (h > 0.3 && h < 1.05) x = -1; }
+  }
+  let act = false; for (let i = 1; i <= 5; i++) if (b(i)) act = true;
+  return { x, jump: b(0), act };
 }
 const prev = [{}, {}];
 function readInput() {
   const ps = pads(), a = padIn(ps[0]), b = padIn(ps[1]);
-  const k1 = { x: (keys.ArrowRight ? 1 : 0) - (keys.ArrowLeft ? 1 : 0), jump: K('Space') || K('ArrowUp') || K('Enter') || K('NumpadEnter') || K('Tap'), act: K('KeyX') || K('KeyZ') || K('ArrowDown') };
+  const k1 = { x: (keys.ArrowRight ? 1 : 0) - (keys.ArrowLeft ? 1 : 0), jump: K('Space') || K('ArrowUp') || K('Enter') || K('NumpadEnter') || K('Tap'), act: K('KeyX') || K('KeyZ') || K('KeyC') || K('ArrowDown') || K('ShiftLeft') || K('ShiftRight') || K('ControlLeft') };
   const k2 = { x: (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0), jump: K('KeyW'), act: K('KeyS') };
   for (const c in tapq) delete tapq[c];
   const mk = (p, k, pr) => {
@@ -223,10 +248,12 @@ function updMeadow(dt, i1, i2) {
   // искорки
   for (const s of S.stars) if (!s.got && Math.abs(al.x - s.x) < 52 && Math.abs(al.y - 80 - s.y) < 90) { s.got = true; S.got++; sfx.star(); }
   // встреча с Искоркой
-  if (!S.met && Math.abs(al.x - isk.x) < 170) { S.met = true; sfx.chime(); for (let i = 0; i < 6; i++) S.hearts.push({ x: (al.x + isk.x) / 2 + (i - 3) * 22, y: GY - 200, t: i * 0.12 }); say('Искорка', 'Привет, Алиса! Я Искорка. Побежали вместе!'); }
+  if (!S.met && Math.abs(al.x - isk.x) < 170) { S.met = true; sfx.chime(); for (let i = 0; i < 6; i++) S.hearts.push({ x: (al.x + isk.x) / 2 + (i - 3) * 22, y: GY - 200, t: i * 0.12 }); say('Искорка', 'Привет, Алиса! Я Искорка. Побежали вместе!'); S.tip = 4.2; }
+  if (S.tip > 0) { S.tip -= dt; if (S.tip <= 0) say('Искорка', 'Если нужна помощь, нажми левую кнопку, и я прибегу!'); }
   // подсказка у ручья
   if (!S.hint && !S.bridgeOn && al.x > 2330) { S.hint = true; say('Искорка', 'Ручей широкий. Позови меня, я нарисую мостик!'); }
-  if (i1.actHit && al.control && S.met) { if (!S.bridgeOn && al.x > 2150 && al.x < 2700) callBridge(); else { sfx.star(); for (let i = 0; i < 4; i++) S.hearts.push({ x: isk.x + (i - 2) * 24, y: isk.y - 210, t: i * 0.1 }); } }
+  if (i1.actHit && al.control && S.met) { S.called = 0.6; if (!S.bridgeOn && al.x > 2150 && al.x < 2700) callBridge(); else { sfx.star(); for (let i = 0; i < 4; i++) S.hearts.push({ x: isk.x + (i - 2) * 24, y: isk.y - 210, t: i * 0.1 }); } }
+  if (S.called > 0) S.called -= dt;
   if (S.bridgeOn && S.bridge < 1) { S.bridge = Math.min(1, S.bridge + dt * 0.9); if (S.bridge >= 1) S.bridgeP.off = false; }
   // Искорка: идёт следом или ею управляет второй игрок
   if (i2.x || i2.jump) S.p2 = 12; else S.p2 -= dt;
@@ -295,6 +322,12 @@ function drawMeadow() {
   // HUD
   for (let i = 0; i < 3; i++) { g.globalAlpha = 0.35; spr('star', 60 + i * 66, 84, 58); g.globalAlpha = 1; }
   spr('star', W - 130, 78, 46); text(S.got + '', W - 70, 56, 40, '#fff', 'center', '#b0731a');
+  if (S.met && !S.end) { // кнопка «позвать Искорку»
+    const near = !S.bridgeOn && al.x > 2150, k = S.called > 0 ? 1.15 : 1;
+    g.fillStyle = near ? 'rgba(255,216,58,.9)' : 'rgba(255,255,255,.75)'; g.beginPath(); g.arc(70, 190, 52 * k, 0, 7); g.fill();
+    g.save(); g.beginPath(); g.arc(70, 190, 46 * k, 0, 7); g.clip(); spr('isk_front', 70, 262, 150 * k); g.restore();
+    padIcon(160, 190, 'left', near ? T : 0); text('X', 160, 252, 24, '#fff', 'center', '#7a4bd1');
+  }
   if (S.end > 13) {
     g.fillStyle = 'rgba(60,40,140,' + Math.min((S.end - 13) / 1.5, 0.7) + ')'; g.fillRect(0, 0, W, H);
     text('Продолжение следует…', W / 2, 290, 72, '#fff', 'center', '#d6418f'); text('Искорок собрано: ' + S.got + ' из 10', W / 2, 390, 42, '#ffe45c', 'center', '#5a3fb0');
